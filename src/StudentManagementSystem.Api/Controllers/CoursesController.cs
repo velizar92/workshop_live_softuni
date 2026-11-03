@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
 
@@ -16,10 +17,16 @@ public class CoursesController : ControllerBase
     }
 
     [HttpGet]
-    public ActionResult<IEnumerable<Course>> GetAll()
+    public ActionResult<IEnumerable<Course>> GetAll([FromQuery] bool availableOnly = false)
     {
-        var courses = _context.Courses.ToList();
-        return Ok(courses);
+        var query = _context.Courses.AsNoTracking();
+
+        if (availableOnly)
+        {
+            query = query.Where(c => c.Enrollments.Count < c.MaxCapacity);
+        }
+
+        return Ok(query.ToList());
     }
 
     [HttpGet("{id}")]
