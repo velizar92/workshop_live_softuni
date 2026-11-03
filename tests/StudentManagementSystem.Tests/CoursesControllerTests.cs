@@ -1,43 +1,23 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using StudentManagementSystem.Api.Controllers;
-using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
+using StudentManagementSystem.Tests.Fakes;
 
 namespace StudentManagementSystem.Tests;
 
 public class CoursesControllerTests
 {
-    private static AppDbContext CreateContext()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-
-        return new AppDbContext(options);
-    }
-
-    private static (AppDbContext Context, Course Course) CreateContextWithCourse()
-    {
-        var context = CreateContext();
-
-        var course = new Course { Name = "Mathematics", MaxCapacity = 30 };
-        context.Courses.Add(course);
-        context.SaveChanges();
-
-        return (context, course);
-    }
-
     [Fact]
-    public void GetAll_ReturnsAllCourses()
+    public void GetAll_ReturnsOkWithServiceResult()
     {
-        var (context, _) = CreateContextWithCourse();
-        var controller = new CoursesController(context);
+        var courses = new List<Course> { new() { Id = 1, Name = "Mathematics", MaxCapacity = 30 } };
+        var fake = new FakeCourseService { CoursesToReturn = courses };
+        var controller = new CoursesController(fake);
 
         var result = controller.GetAll();
 
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        Assert.Single(Assert.IsAssignableFrom<IEnumerable<Course>>(okResult.Value));
+        Assert.Same(courses, okResult.Value);
     }
 
     [Fact]
@@ -101,20 +81,21 @@ public class CoursesControllerTests
     [Fact]
     public void GetById_ExistingCourse_ReturnsCourse()
     {
-        var (context, course) = CreateContextWithCourse();
-        var controller = new CoursesController(context);
+        var course = new Course { Id = 1, Name = "Mathematics", MaxCapacity = 30 };
+        var fake = new FakeCourseService { CourseToReturn = course };
+        var controller = new CoursesController(fake);
 
         var result = controller.GetById(course.Id);
 
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        Assert.Equal(course.Id, Assert.IsType<Course>(okResult.Value).Id);
+        Assert.Same(course, okResult.Value);
     }
 
     [Fact]
-    public void GetById_NonExistentCourse_ReturnsNotFound()
+    public void GetById_ServiceReturnsNull_ReturnsNotFound()
     {
-        var context = CreateContext();
-        var controller = new CoursesController(context);
+        var fake = new FakeCourseService { CourseToReturn = null };
+        var controller = new CoursesController(fake);
 
         var result = controller.GetById(999);
 
@@ -122,34 +103,38 @@ public class CoursesControllerTests
     }
 
     [Fact]
-    public void Create_ValidCourse_ReturnsCreated()
+    public void Create_DelegatesToServiceAndReturnsCreated()
     {
-        var context = CreateContext();
-        var controller = new CoursesController(context);
+        var created = new Course { Id = 5, Name = "Physics", MaxCapacity = 20 };
+        var fake = new FakeCourseService { CreateResultToReturn = created };
+        var controller = new CoursesController(fake);
+        var newCourse = new Course { Name = "Physics", MaxCapacity = 20 };
 
-        var result = controller.Create(new Course { Name = "Physics", MaxCapacity = 20 });
+        var result = controller.Create(newCourse);
 
-        Assert.IsType<CreatedAtActionResult>(result.Result);
-        Assert.Single(context.Courses);
+        var createdResult = Assert.IsType<CreatedAtActionResult>(result.Result);
+        Assert.Same(created, createdResult.Value);
+        Assert.Same(newCourse, fake.LastCreateCall);
     }
 
     [Fact]
-    public void Update_ExistingCourse_ReturnsNoContent()
+    public void Update_ServiceReturnsTrue_ReturnsNoContent()
     {
-        var (context, course) = CreateContextWithCourse();
-        var controller = new CoursesController(context);
+        var fake = new FakeCourseService { UpdateResultToReturn = true };
+        var controller = new CoursesController(fake);
+        var updatedCourse = new Course { Name = "Updated Course", MaxCapacity = 50 };
 
-        var result = controller.Update(course.Id, new Course { Name = "Updated Course", MaxCapacity = 50 });
+        var result = controller.Update(1, updatedCourse);
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Equal("Updated Course", context.Courses.Find(course.Id)!.Name);
+        Assert.Equal((1, updatedCourse), fake.LastUpdateCall);
     }
 
     [Fact]
-    public void Update_NonExistentCourse_ReturnsNotFound()
+    public void Update_ServiceReturnsFalse_ReturnsNotFound()
     {
-        var context = CreateContext();
-        var controller = new CoursesController(context);
+        var fake = new FakeCourseService { UpdateResultToReturn = false };
+        var controller = new CoursesController(fake);
 
         var result = controller.Update(999, new Course { Name = "Ghost Course", MaxCapacity = 10 });
 
@@ -157,22 +142,22 @@ public class CoursesControllerTests
     }
 
     [Fact]
-    public void Delete_ExistingCourse_ReturnsNoContent()
+    public void Delete_ServiceReturnsTrue_ReturnsNoContent()
     {
-        var (context, course) = CreateContextWithCourse();
-        var controller = new CoursesController(context);
+        var fake = new FakeCourseService { DeleteResultToReturn = true };
+        var controller = new CoursesController(fake);
 
-        var result = controller.Delete(course.Id);
+        var result = controller.Delete(1);
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Empty(context.Courses);
+        Assert.Equal(1, fake.LastDeleteCall);
     }
 
     [Fact]
-    public void Delete_NonExistentCourse_ReturnsNotFound()
+    public void Delete_ServiceReturnsFalse_ReturnsNotFound()
     {
-        var context = CreateContext();
-        var controller = new CoursesController(context);
+        var fake = new FakeCourseService { DeleteResultToReturn = false };
+        var controller = new CoursesController(fake);
 
         var result = controller.Delete(999);
 

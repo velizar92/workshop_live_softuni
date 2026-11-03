@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
+using StudentManagementSystem.Api.Services;
 
 namespace StudentManagementSystem.Api.Controllers;
 
@@ -9,11 +10,11 @@ namespace StudentManagementSystem.Api.Controllers;
 [Route("api/courses")]
 public class CoursesController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly ICourseService _courseService;
 
-    public CoursesController(AppDbContext context)
+    public CoursesController(ICourseService courseService)
     {
-        _context = context;
+        _courseService = courseService;
     }
 
     [HttpGet]
@@ -32,7 +33,7 @@ public class CoursesController : ControllerBase
     [HttpGet("{id}")]
     public ActionResult<Course> GetById(int id)
     {
-        var course = _context.Courses.Find(id);
+        var course = _courseService.GetById(id);
         if (course == null)
         {
             return NotFound();
@@ -44,42 +45,20 @@ public class CoursesController : ControllerBase
     [HttpPost]
     public ActionResult<Course> Create(Course course)
     {
-        _context.Courses.Add(course);
-        _context.SaveChanges();
+        var created = _courseService.Create(course);
 
-        return CreatedAtAction(nameof(GetById), new { id = course.Id }, course);
+        return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
     [HttpPut("{id}")]
     public IActionResult Update(int id, Course updatedCourse)
     {
-        var course = _context.Courses.Find(id);
-        if (course == null)
-        {
-            return NotFound();
-        }
-
-        course.Name = updatedCourse.Name;
-        course.Description = updatedCourse.Description;
-        course.MaxCapacity = updatedCourse.MaxCapacity;
-
-        _context.SaveChanges();
-
-        return NoContent();
+        return _courseService.Update(id, updatedCourse) ? NoContent() : NotFound();
     }
 
     [HttpDelete("{id}")]
     public IActionResult Delete(int id)
     {
-        var course = _context.Courses.Find(id);
-        if (course == null)
-        {
-            return NotFound();
-        }
-
-        _context.Courses.Remove(course);
-        _context.SaveChanges();
-
-        return NoContent();
+        return _courseService.Delete(id) ? NoContent() : NotFound();
     }
 }

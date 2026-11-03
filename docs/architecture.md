@@ -15,6 +15,7 @@ StudentManagementSystem.sln
 src/
   StudentManagementSystem.Api/
     Controllers/   StudentsController, CoursesController, EnrollmentsController
+    Services/      IStudentService, StudentService, ICourseService, CourseService
     Services/      IEnrollmentService, EnrollmentService
     Models/        Student, Course, Enrollment (EF Core entities)
     Data/          AppDbContext, SeedData
@@ -45,6 +46,22 @@ The composition root. It:
 Three controllers, one per resource:
 
 - **`StudentsController`** (`api/students`) — CRUD for students. Injected with
+  `IStudentService` and contains no data-access code of its own; it only maps the
+  service's result to the appropriate HTTP status code and body.
+- **`CoursesController`** (`api/courses`) — CRUD for courses. Injected with
+  `ICourseService`, same shape as `StudentsController`.
+- **`EnrollmentsController`** (`api/enrollments`) — create an enrollment, list a
+  student's courses, list a course's students, remove an enrollment. Still injected
+  with `AppDbContext` directly and contains its business logic inline (see "Known
+  upcoming changes").
+
+### Services (`Services/`)
+- **`IStudentService` / `StudentService`** and **`ICourseService` / `CourseService`** —
+  own the lookups and persistence for students and courses respectively (`GetAll`,
+  `GetById`, `Create`, `Update`, `Delete`). Each depends on `AppDbContext` and is
+  registered as a scoped service in `Program.cs`. `StudentsController` and
+  `CoursesController` depend only on their respective service interface, not on
+  `AppDbContext`.
   `AppDbContext` directly.
 - **`CoursesController`** (`api/courses`) — CRUD for courses. Injected with
   `AppDbContext` directly.
@@ -104,6 +121,8 @@ graph TD
         Students["StudentsController"]
         Courses["CoursesController"]
         Enrollments["EnrollmentsController"]
+        StudentSvc["IStudentService / StudentService"]
+        CourseSvc["ICourseService / CourseService"]
         EnrollmentSvc["EnrollmentService"]
         Seed["SeedData"]
         Ctx["AppDbContext"]
@@ -122,6 +141,11 @@ graph TD
     Program -->|registers| EnrollmentSvc
     Program -->|EnsureCreated + seed on startup| Seed
 
+    Students --> StudentSvc
+    Courses --> CourseSvc
+    Enrollments --> Ctx
+    StudentSvc --> Ctx
+    CourseSvc --> Ctx
     Students --> Ctx
     Courses --> Ctx
     Enrollments --> EnrollmentSvc
@@ -134,6 +158,12 @@ graph TD
 
 ## 4. Request path: from endpoint to database
 
+`StudentsController` and `CoursesController` receive the HTTP request, delegate to
+`IStudentService`/`ICourseService`, and translate the service's return value into an
+HTTP response — they contain no EF Core code themselves. `EnrollmentsController` still
+talks to `AppDbContext` directly (synchronously, via LINQ-to-Entities) and translates
+the result into an HTTP response itself; "controller logic" and "business logic" remain
+the same code there (see "Known upcoming changes").
 `StudentsController` and `CoursesController` talk to `AppDbContext` directly
 (synchronously, via LINQ-to-Entities) and translate the result into an HTTP response —
 for these two, "controller logic" and "business logic" are still the same code.
@@ -170,13 +200,19 @@ sequenceDiagram
     EC-->>C: 201 Created + Enrollment body
 ```
 
+`StudentService` and `CourseService` follow the same shape (controller → service →
+`AppDbContext` → SQLite, synchronously): simple lookups use `Find`/`ToList`, writes call
+`Add`/`Remove` followed by `SaveChanges()`, and the controller maps the service's return
+value (`null`/non-null, `true`/`false`) to `Ok`, `NotFound`, `CreatedAtAction`, or
+`NoContent`.
 The `Students` and `Courses` endpoints still follow the controller → `AppDbContext` →
 SQLite pattern directly: simple lookups use `Find`/`Single`/`FirstOrDefault`, writes call
 `Add`/`Remove` followed by `SaveChanges()`, and the controller maps the outcome to `Ok`,
 `NotFound`, `CreatedAtAction`, `NoContent`, or `StatusCode(201, ...)`.
 
-Note that database calls are currently synchronous (`Single`, `ToList`, `SaveChanges`)
-rather than using the `async` EF Core APIs.
+Note that database calls are currently synchronous (`Find`, `ToList`, `SaveChanges`)
+rather than using the `async` EF Core APIs, for both the services and
+`EnrollmentsController`.
 
 ## 5. Enrollment logic today
 
@@ -205,6 +241,14 @@ maps its results to HTTP responses:
 The following change is tracked as a separate issue and will affect this document when
 implemented. Update the relevant section above when it lands:
 
+- Preventing duplicate enrollments and enforcing `Course.MaxCapacity` when creating an
+  enrollment (changes section 5's "Create" behavior).
+- Returning consistent `404` responses for missing students/courses instead of letting
+  lookups throw (changes sections 4 and 5).
+- Extracting business logic out of `EnrollmentsController` into a dedicated service,
+  following the pattern already established by `StudentService`/`CourseService`
+  (changes sections 2, 3, and 4 — `EnrollmentsController` would stop depending on
+  `AppDbContext` directly).
 - Extracting business logic out of `StudentsController` and `CoursesController` into
   dedicated services, following the pattern already established by
   `EnrollmentService` (changes sections 2 and 4 — those two controllers would stop
@@ -216,6 +260,8 @@ implemented. Update the relevant section above when it lands:
 |---|---|
 | `StudentManagementSystem.sln` | Solution file referencing both projects. |
 | `src/StudentManagementSystem.Api/Program.cs` | App startup, DI registration, HTTP pipeline. |
+| `src/StudentManagementSystem.Api/Controllers/*.cs` | HTTP endpoints; business logic for `Enrollments`, HTTP mapping only for `Students`/`Courses`. |
+| `src/StudentManagementSystem.Api/Services/*.cs` | Student and course business logic. |
 | `src/StudentManagementSystem.Api/Controllers/*.cs` | HTTP endpoints; business logic for `Students`/`Courses`, HTTP mapping only for `Enrollments`. |
 | `src/StudentManagementSystem.Api/Services/*.cs` | Enrollment business logic (first service layer in the solution). |
 | `src/StudentManagementSystem.Api/Models/*.cs` | EF Core entities. |

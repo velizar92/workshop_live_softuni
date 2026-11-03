@@ -1,46 +1,27 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using StudentManagementSystem.Api.Controllers;
-using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
+using StudentManagementSystem.Tests.Fakes;
 
 namespace StudentManagementSystem.Tests;
 
 public class StudentsControllerTests
 {
-    private static AppDbContext CreateContext()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-
-        return new AppDbContext(options);
-    }
-
-    private static (AppDbContext Context, Student Student) CreateContextWithStudent()
-    {
-        var context = CreateContext();
-
-        var student = new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" };
-        context.Students.Add(student);
-        context.SaveChanges();
-
-        return (context, student);
-    }
-
     [Fact]
-    public void GetAll_ReturnsAllStudents()
+    public void GetAll_ReturnsOkWithServiceResult()
     {
-        var (context, _) = CreateContextWithStudent();
-        var controller = new StudentsController(context);
+        var students = new List<Student> { new() { Id = 1, FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" } };
+        var fake = new FakeStudentService { StudentsToReturn = students };
+        var controller = new StudentsController(fake);
 
         var result = controller.GetAll(null);
 
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        Assert.Single(Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value));
+        Assert.Same(students, okResult.Value);
     }
 
     [Fact]
+    public void GetById_ServiceReturnsStudent_ReturnsOk()
     public void GetAll_NoSearch_ReturnsAllStudents()
     {
         var context = CreateContext();
@@ -138,20 +119,21 @@ public class StudentsControllerTests
     [Fact]
     public void GetById_ExistingStudent_ReturnsStudent()
     {
-        var (context, student) = CreateContextWithStudent();
-        var controller = new StudentsController(context);
+        var student = new Student { Id = 1, FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" };
+        var fake = new FakeStudentService { StudentToReturn = student };
+        var controller = new StudentsController(fake);
 
         var result = controller.GetById(student.Id);
 
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
-        Assert.Equal(student.Id, Assert.IsType<Student>(okResult.Value).Id);
+        Assert.Same(student, okResult.Value);
     }
 
     [Fact]
-    public void GetById_NonExistentStudent_ReturnsNotFound()
+    public void GetById_ServiceReturnsNull_ReturnsNotFound()
     {
-        var context = CreateContext();
-        var controller = new StudentsController(context);
+        var fake = new FakeStudentService { StudentToReturn = null };
+        var controller = new StudentsController(fake);
 
         var result = controller.GetById(999);
 
@@ -159,34 +141,38 @@ public class StudentsControllerTests
     }
 
     [Fact]
-    public void Create_ValidStudent_ReturnsCreated()
+    public void Create_DelegatesToServiceAndReturnsCreated()
     {
-        var context = CreateContext();
-        var controller = new StudentsController(context);
+        var created = new Student { Id = 5, FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" };
+        var fake = new FakeStudentService { CreateResultToReturn = created };
+        var controller = new StudentsController(fake);
+        var newStudent = new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" };
 
-        var result = controller.Create(new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" });
+        var result = controller.Create(newStudent);
 
-        Assert.IsType<CreatedAtActionResult>(result.Result);
-        Assert.Single(context.Students);
+        var createdResult = Assert.IsType<CreatedAtActionResult>(result.Result);
+        Assert.Same(created, createdResult.Value);
+        Assert.Same(newStudent, fake.LastCreateCall);
     }
 
     [Fact]
-    public void Update_ExistingStudent_ReturnsNoContent()
+    public void Update_ServiceReturnsTrue_ReturnsNoContent()
     {
-        var (context, student) = CreateContextWithStudent();
-        var controller = new StudentsController(context);
+        var fake = new FakeStudentService { UpdateResultToReturn = true };
+        var controller = new StudentsController(fake);
+        var updatedStudent = new Student { FirstName = "Updated", LastName = "Name", Email = "updated@example.com" };
 
-        var result = controller.Update(student.Id, new Student { FirstName = "Updated", LastName = "Name", Email = "updated@example.com" });
+        var result = controller.Update(1, updatedStudent);
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Equal("Updated", context.Students.Find(student.Id)!.FirstName);
+        Assert.Equal((1, updatedStudent), fake.LastUpdateCall);
     }
 
     [Fact]
-    public void Update_NonExistentStudent_ReturnsNotFound()
+    public void Update_ServiceReturnsFalse_ReturnsNotFound()
     {
-        var context = CreateContext();
-        var controller = new StudentsController(context);
+        var fake = new FakeStudentService { UpdateResultToReturn = false };
+        var controller = new StudentsController(fake);
 
         var result = controller.Update(999, new Student { FirstName = "Ghost", LastName = "Student", Email = "ghost@example.com" });
 
@@ -194,22 +180,22 @@ public class StudentsControllerTests
     }
 
     [Fact]
-    public void Delete_ExistingStudent_ReturnsNoContent()
+    public void Delete_ServiceReturnsTrue_ReturnsNoContent()
     {
-        var (context, student) = CreateContextWithStudent();
-        var controller = new StudentsController(context);
+        var fake = new FakeStudentService { DeleteResultToReturn = true };
+        var controller = new StudentsController(fake);
 
-        var result = controller.Delete(student.Id);
+        var result = controller.Delete(1);
 
         Assert.IsType<NoContentResult>(result);
-        Assert.Empty(context.Students);
+        Assert.Equal(1, fake.LastDeleteCall);
     }
 
     [Fact]
-    public void Delete_NonExistentStudent_ReturnsNotFound()
+    public void Delete_ServiceReturnsFalse_ReturnsNotFound()
     {
-        var context = CreateContext();
-        var controller = new StudentsController(context);
+        var fake = new FakeStudentService { DeleteResultToReturn = false };
+        var controller = new StudentsController(fake);
 
         var result = controller.Delete(999);
 
