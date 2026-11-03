@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
 
@@ -21,6 +22,14 @@ public class EnrollmentsController : ControllerBase
         var student = _context.Students.Single(s => s.Id == request.StudentId);
         var course = _context.Courses.Single(c => c.Id == request.CourseId);
 
+        var alreadyEnrolled = _context.Enrollments
+            .Any(e => e.StudentId == request.StudentId && e.CourseId == request.CourseId);
+
+        if (alreadyEnrolled)
+        {
+            return Conflict($"Student {request.StudentId} is already enrolled in course {request.CourseId}.");
+        }
+
         var enrollment = new Enrollment
         {
             StudentId = student.Id,
@@ -29,7 +38,15 @@ public class EnrollmentsController : ControllerBase
         };
 
         _context.Enrollments.Add(enrollment);
-        _context.SaveChanges();
+
+        try
+        {
+            _context.SaveChanges();
+        }
+        catch (DbUpdateException)
+        {
+            return Conflict($"Student {request.StudentId} is already enrolled in course {request.CourseId}.");
+        }
 
         return StatusCode(StatusCodes.Status201Created, enrollment);
     }
