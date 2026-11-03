@@ -19,8 +19,17 @@ public class EnrollmentsController : ControllerBase
     [HttpPost]
     public ActionResult<Enrollment> Enroll(EnrollmentRequest request)
     {
-        var student = _context.Students.Single(s => s.Id == request.StudentId);
-        var course = _context.Courses.Single(c => c.Id == request.CourseId);
+        var student = _context.Students.Find(request.StudentId);
+        if (student == null)
+        {
+            return NotFound($"Student {request.StudentId} does not exist.");
+        }
+
+        var course = _context.Courses.Find(request.CourseId);
+        if (course == null)
+        {
+            return NotFound($"Course {request.CourseId} does not exist.");
+        }
 
         var alreadyEnrolled = _context.Enrollments
             .Any(e => e.StudentId == request.StudentId && e.CourseId == request.CourseId);

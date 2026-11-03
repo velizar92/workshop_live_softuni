@@ -47,7 +47,11 @@ public class StudentsController : ControllerBase
     [HttpPut("{id}")]
     public IActionResult Update(int id, Student updatedStudent)
     {
-        var student = _context.Students.Single(s => s.Id == id);
+        var student = _context.Students.Find(id);
+        if (student == null)
+        {
+            return NotFound();
+        }
 
         student.FirstName = updatedStudent.FirstName;
         student.LastName = updatedStudent.LastName;

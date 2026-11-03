@@ -46,6 +46,30 @@ public class EnrollmentsControllerTests
     }
 
     [Fact]
+    public void Enroll_NonExistentStudentId_ReturnsNotFound()
+    {
+        var (context, _, course) = CreateContextWithStudentAndCourse();
+        var controller = new EnrollmentsController(context);
+
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = 999, CourseId = course.Id });
+
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Empty(context.Enrollments);
+    }
+
+    [Fact]
+    public void Enroll_NonExistentCourseId_ReturnsNotFound()
+    {
+        var (context, student, _) = CreateContextWithStudentAndCourse();
+        var controller = new EnrollmentsController(context);
+
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = 999 });
+
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Empty(context.Enrollments);
+    }
+
+    [Fact]
     public void Enroll_DuplicateStudentAndCourse_ReturnsConflict()
     {
         var (context, student, course) = CreateContextWithStudentAndCourse();
