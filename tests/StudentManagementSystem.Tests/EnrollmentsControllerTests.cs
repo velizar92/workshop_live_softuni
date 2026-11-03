@@ -1,163 +1,133 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using StudentManagementSystem.Api.Controllers;
-using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
+using StudentManagementSystem.Api.Services;
+using StudentManagementSystem.Tests.Fakes;
 
 namespace StudentManagementSystem.Tests;
 
 public class EnrollmentsControllerTests
 {
-    private static AppDbContext CreateContext()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-
-        return new AppDbContext(options);
-    }
-
-    private static (AppDbContext Context, Student Student, Course Course) CreateContextWithStudentAndCourse()
-    {
-        var context = CreateContext();
-
-        var student = new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" };
-        var course = new Course { Name = "Mathematics", MaxCapacity = 30 };
-
-        context.Students.Add(student);
-        context.Courses.Add(course);
-        context.SaveChanges();
-
-        return (context, student, course);
-    }
-
     [Fact]
-    public void Enroll_NewStudentAndCourse_ReturnsCreated()
+    public void Enroll_ServiceReturnsCreated_Returns201WithEnrollmentBody()
     {
-        var (context, student, course) = CreateContextWithStudentAndCourse();
-        var controller = new EnrollmentsController(context);
+        var enrollment = new Enrollment { StudentId = 1, CourseId = 2, EnrollmentDate = DateTime.UtcNow };
+        var fake = new FakeEnrollmentService { EnrollResultToReturn = EnrollResult.Created(enrollment) };
+        var controller = new EnrollmentsController(fake);
 
-        var result = controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = course.Id });
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = 1, CourseId = 2 });
 
         var objectResult = Assert.IsType<ObjectResult>(result.Result);
         Assert.Equal(StatusCodes.Status201Created, objectResult.StatusCode);
-        Assert.Single(context.Enrollments);
+        Assert.Same(enrollment, objectResult.Value);
     }
 
     [Fact]
-    public void Enroll_NonExistentStudentId_ReturnsNotFound()
+    public void Enroll_ServiceReturnsStudentNotFound_Returns404WithStudentMessage()
     {
-        var (context, _, course) = CreateContextWithStudentAndCourse();
-        var controller = new EnrollmentsController(context);
+        var fake = new FakeEnrollmentService { EnrollResultToReturn = EnrollResult.StudentNotFound() };
+        var controller = new EnrollmentsController(fake);
 
-        var result = controller.Enroll(new EnrollmentRequest { StudentId = 999, CourseId = course.Id });
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = 999, CourseId = 2 });
 
-        Assert.IsType<NotFoundObjectResult>(result.Result);
-        Assert.Empty(context.Enrollments);
+        var notFoundResult = Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Equal("Student 999 does not exist.", notFoundResult.Value);
     }
 
     [Fact]
-    public void Enroll_NonExistentCourseId_ReturnsNotFound()
+    public void Enroll_ServiceReturnsCourseNotFound_Returns404WithCourseMessage()
     {
-        var (context, student, _) = CreateContextWithStudentAndCourse();
-        var controller = new EnrollmentsController(context);
+        var fake = new FakeEnrollmentService { EnrollResultToReturn = EnrollResult.CourseNotFound() };
+        var controller = new EnrollmentsController(fake);
 
-        var result = controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = 999 });
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = 1, CourseId = 999 });
 
-        Assert.IsType<NotFoundObjectResult>(result.Result);
-        Assert.Empty(context.Enrollments);
+        var notFoundResult = Assert.IsType<NotFoundObjectResult>(result.Result);
+        Assert.Equal("Course 999 does not exist.", notFoundResult.Value);
     }
 
     [Fact]
-    public void Enroll_DuplicateStudentAndCourse_ReturnsConflict()
+    public void Enroll_ServiceReturnsAlreadyEnrolled_Returns409WithDuplicateMessage()
     {
-        var (context, student, course) = CreateContextWithStudentAndCourse();
-        var controller = new EnrollmentsController(context);
+        var fake = new FakeEnrollmentService { EnrollResultToReturn = EnrollResult.AlreadyEnrolled() };
+        var controller = new EnrollmentsController(fake);
 
-        controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = course.Id });
-        var secondResult = controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = course.Id });
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = 1, CourseId = 2 });
 
-        Assert.IsType<ConflictObjectResult>(secondResult.Result);
-        Assert.Single(context.Enrollments);
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("Student 1 is already enrolled in course 2.", conflictResult.Value);
     }
 
     [Fact]
-    public void Enroll_SameStudentDifferentCourse_ReturnsCreated()
+    public void Enroll_ServiceReturnsCourseAtCapacity_Returns409WithCapacityMessage()
     {
-        var (context, student, course) = CreateContextWithStudentAndCourse();
-        var otherCourse = new Course { Name = "Computer Science", MaxCapacity = 30 };
-        context.Courses.Add(otherCourse);
-        context.SaveChanges();
+        var fake = new FakeEnrollmentService { EnrollResultToReturn = EnrollResult.CourseAtCapacity() };
+        var controller = new EnrollmentsController(fake);
 
-        var controller = new EnrollmentsController(context);
+        var result = controller.Enroll(new EnrollmentRequest { StudentId = 1, CourseId = 2 });
 
-        controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = course.Id });
-        var secondResult = controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = otherCourse.Id });
-
-        var objectResult = Assert.IsType<ObjectResult>(secondResult.Result);
-        Assert.Equal(StatusCodes.Status201Created, objectResult.StatusCode);
-        Assert.Equal(2, context.Enrollments.Count());
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("Course 2 has reached its maximum capacity.", conflictResult.Value);
     }
 
     [Fact]
-    public void Enroll_DifferentStudentSameCourse_ReturnsCreated()
+    public void Enroll_PassesRequestIdsToService()
     {
-        var (context, student, course) = CreateContextWithStudentAndCourse();
-        var otherStudent = new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" };
-        context.Students.Add(otherStudent);
-        context.SaveChanges();
+        var fake = new FakeEnrollmentService();
+        var controller = new EnrollmentsController(fake);
 
-        var controller = new EnrollmentsController(context);
+        controller.Enroll(new EnrollmentRequest { StudentId = 7, CourseId = 9 });
 
-        controller.Enroll(new EnrollmentRequest { StudentId = student.Id, CourseId = course.Id });
-        var secondResult = controller.Enroll(new EnrollmentRequest { StudentId = otherStudent.Id, CourseId = course.Id });
-
-        var objectResult = Assert.IsType<ObjectResult>(secondResult.Result);
-        Assert.Equal(StatusCodes.Status201Created, objectResult.StatusCode);
-        Assert.Equal(2, context.Enrollments.Count());
+        Assert.Equal((7, 9), fake.LastEnrollCall);
     }
 
     [Fact]
-    public void Enroll_CourseAtMaxCapacity_ReturnsConflict()
+    public void GetCoursesForStudent_ReturnsOkWithServiceResult()
     {
-        var context = CreateContext();
-        var course = new Course { Name = "Mathematics", MaxCapacity = 1 };
-        var firstStudent = new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" };
-        var secondStudent = new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" };
+        var courses = new List<Course> { new() { Id = 1, Name = "Mathematics", MaxCapacity = 30 } };
+        var fake = new FakeEnrollmentService { CoursesToReturn = courses };
+        var controller = new EnrollmentsController(fake);
 
-        context.Courses.Add(course);
-        context.Students.AddRange(firstStudent, secondStudent);
-        context.SaveChanges();
+        var result = controller.GetCoursesForStudent(1);
 
-        var controller = new EnrollmentsController(context);
-
-        controller.Enroll(new EnrollmentRequest { StudentId = firstStudent.Id, CourseId = course.Id });
-        var secondResult = controller.Enroll(new EnrollmentRequest { StudentId = secondStudent.Id, CourseId = course.Id });
-
-        Assert.IsType<ConflictObjectResult>(secondResult.Result);
-        Assert.Single(context.Enrollments);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Same(courses, okResult.Value);
     }
 
     [Fact]
-    public void Enroll_CourseWithAvailableCapacity_ReturnsCreated()
+    public void GetStudentsForCourse_ReturnsOkWithServiceResult()
     {
-        var context = CreateContext();
-        var course = new Course { Name = "Mathematics", MaxCapacity = 2 };
-        var firstStudent = new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" };
-        var secondStudent = new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" };
+        var students = new List<Student> { new() { Id = 1, FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" } };
+        var fake = new FakeEnrollmentService { StudentsToReturn = students };
+        var controller = new EnrollmentsController(fake);
 
-        context.Courses.Add(course);
-        context.Students.AddRange(firstStudent, secondStudent);
-        context.SaveChanges();
+        var result = controller.GetStudentsForCourse(1);
 
-        var controller = new EnrollmentsController(context);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Same(students, okResult.Value);
+    }
 
-        controller.Enroll(new EnrollmentRequest { StudentId = firstStudent.Id, CourseId = course.Id });
-        var secondResult = controller.Enroll(new EnrollmentRequest { StudentId = secondStudent.Id, CourseId = course.Id });
+    [Fact]
+    public void RemoveEnrollment_ServiceReturnsTrue_Returns204NoContent()
+    {
+        var fake = new FakeEnrollmentService { RemoveResultToReturn = true };
+        var controller = new EnrollmentsController(fake);
 
-        var objectResult = Assert.IsType<ObjectResult>(secondResult.Result);
-        Assert.Equal(StatusCodes.Status201Created, objectResult.StatusCode);
-        Assert.Equal(2, context.Enrollments.Count());
+        var result = controller.RemoveEnrollment(1, 2);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal((1, 2), fake.LastRemoveCall);
+    }
+
+    [Fact]
+    public void RemoveEnrollment_ServiceReturnsFalse_Returns404NotFound()
+    {
+        var fake = new FakeEnrollmentService { RemoveResultToReturn = false };
+        var controller = new EnrollmentsController(fake);
+
+        var result = controller.RemoveEnrollment(1, 2);
+
+        Assert.IsType<NotFoundResult>(result);
     }
 }

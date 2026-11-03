@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
+using StudentManagementSystem.Api.Services;
 
 namespace StudentManagementSystem.Api.Controllers;
 
@@ -9,101 +8,44 @@ namespace StudentManagementSystem.Api.Controllers;
 [Route("api/enrollments")]
 public class EnrollmentsController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly IEnrollmentService _enrollmentService;
 
-    public EnrollmentsController(AppDbContext context)
+    public EnrollmentsController(IEnrollmentService enrollmentService)
     {
-        _context = context;
+        _enrollmentService = enrollmentService;
     }
 
     [HttpPost]
     public ActionResult<Enrollment> Enroll(EnrollmentRequest request)
     {
-        var student = _context.Students.Find(request.StudentId);
-        if (student == null)
+        var result = _enrollmentService.Enroll(request.StudentId, request.CourseId);
+
+        return result.Outcome switch
         {
-            return NotFound($"Student {request.StudentId} does not exist.");
-        }
-
-        var course = _context.Courses.Find(request.CourseId);
-        if (course == null)
-        {
-            return NotFound($"Course {request.CourseId} does not exist.");
-        }
-
-        var alreadyEnrolled = _context.Enrollments
-            .Any(e => e.StudentId == request.StudentId && e.CourseId == request.CourseId);
-
-        if (alreadyEnrolled)
-        {
-            return Conflict($"Student {request.StudentId} is already enrolled in course {request.CourseId}.");
-        }
-
-        var enrolledCount = _context.Enrollments.Count(e => e.CourseId == request.CourseId);
-
-        if (enrolledCount >= course.MaxCapacity)
-        {
-            return Conflict($"Course {request.CourseId} has reached its maximum capacity.");
-        }
-
-        var enrollment = new Enrollment
-        {
-            StudentId = student.Id,
-            CourseId = course.Id,
-            EnrollmentDate = DateTime.UtcNow
+            EnrollOutcome.StudentNotFound => NotFound($"Student {request.StudentId} does not exist."),
+            EnrollOutcome.CourseNotFound => NotFound($"Course {request.CourseId} does not exist."),
+            EnrollOutcome.AlreadyEnrolled => Conflict($"Student {request.StudentId} is already enrolled in course {request.CourseId}."),
+            EnrollOutcome.CourseAtCapacity => Conflict($"Course {request.CourseId} has reached its maximum capacity."),
+            _ => StatusCode(StatusCodes.Status201Created, result.Enrollment)
         };
-
-        _context.Enrollments.Add(enrollment);
-
-        try
-        {
-            _context.SaveChanges();
-        }
-        catch (DbUpdateException)
-        {
-            return Conflict($"Student {request.StudentId} is already enrolled in course {request.CourseId}.");
-        }
-
-        return StatusCode(StatusCodes.Status201Created, enrollment);
     }
 
     [HttpGet("students/{studentId}/courses")]
     public ActionResult<IEnumerable<Course>> GetCoursesForStudent(int studentId)
     {
-        var courses = _context.Enrollments
-            .Where(e => e.StudentId == studentId)
-            .Select(e => e.Course)
-            .ToList();
-
-        return Ok(courses);
+        return Ok(_enrollmentService.GetCoursesForStudent(studentId));
     }
 
     [HttpGet("courses/{courseId}/students")]
     public ActionResult<IEnumerable<Student>> GetStudentsForCourse(int courseId)
     {
-        var students = _context.Enrollments
-            .Where(e => e.CourseId == courseId)
-            .Select(e => e.Student)
-            .ToList();
-
-        return Ok(students);
+        return Ok(_enrollmentService.GetStudentsForCourse(courseId));
     }
 
     [HttpDelete("students/{studentId}/courses/{courseId}")]
     public IActionResult RemoveEnrollment(int studentId, int courseId)
     {
-        var enrollment = _context.Enrollments
-            .FirstOrDefault(e => e.StudentId == studentId && e.CourseId == courseId);
-
-        if (enrollment == null)
-        {
-            return NotFound();
-        }
-
-        _context.Enrollments.Remove(enrollment);
-        _context.SaveChanges();
-
-        return NoContent();
+        return _enrollmentService.RemoveEnrollment(studentId, courseId) ? NoContent() : NotFound();
     }
 }
 
