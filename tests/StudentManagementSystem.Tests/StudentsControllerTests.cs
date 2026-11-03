@@ -34,10 +34,105 @@ public class StudentsControllerTests
         var (context, _) = CreateContextWithStudent();
         var controller = new StudentsController(context);
 
-        var result = controller.GetAll();
+        var result = controller.GetAll(null);
 
         var okResult = Assert.IsType<OkObjectResult>(result.Result);
         Assert.Single(Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value));
+    }
+
+    [Fact]
+    public void GetAll_NoSearch_ReturnsAllStudents()
+    {
+        var context = CreateContext();
+        context.Students.Add(new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" });
+        context.Students.Add(new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" });
+        context.SaveChanges();
+        var controller = new StudentsController(context);
+
+        var result = controller.GetAll(null);
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Equal(2, Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value).Count());
+    }
+
+    [Fact]
+    public void GetAll_SearchByFirstName_ReturnsMatchingStudents()
+    {
+        var context = CreateContext();
+        context.Students.Add(new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" });
+        context.Students.Add(new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" });
+        context.SaveChanges();
+        var controller = new StudentsController(context);
+
+        var result = controller.GetAll("Alice");
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var students = Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value);
+        Assert.Single(students);
+        Assert.Equal("Alice", students.Single().FirstName);
+    }
+
+    [Fact]
+    public void GetAll_SearchByLastName_ReturnsMatchingStudents()
+    {
+        var context = CreateContext();
+        context.Students.Add(new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" });
+        context.Students.Add(new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" });
+        context.SaveChanges();
+        var controller = new StudentsController(context);
+
+        var result = controller.GetAll("Smith");
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var students = Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value);
+        Assert.Single(students);
+        Assert.Equal("Bob", students.Single().FirstName);
+    }
+
+    [Fact]
+    public void GetAll_SearchByEmail_ReturnsMatchingStudents()
+    {
+        var context = CreateContext();
+        context.Students.Add(new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" });
+        context.Students.Add(new Student { FirstName = "Bob", LastName = "Smith", Email = "bob@example.com" });
+        context.SaveChanges();
+        var controller = new StudentsController(context);
+
+        var result = controller.GetAll("bob@example.com");
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var students = Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value);
+        Assert.Single(students);
+        Assert.Equal("Bob", students.Single().FirstName);
+    }
+
+    [Fact]
+    public void GetAll_SearchIsCaseInsensitive_ReturnsMatchingStudents()
+    {
+        var context = CreateContext();
+        context.Students.Add(new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" });
+        context.SaveChanges();
+        var controller = new StudentsController(context);
+
+        var result = controller.GetAll("ALICE");
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var students = Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value);
+        Assert.Single(students);
+    }
+
+    [Fact]
+    public void GetAll_SearchWithNoMatches_ReturnsEmptyList()
+    {
+        var context = CreateContext();
+        context.Students.Add(new Student { FirstName = "Alice", LastName = "Doe", Email = "alice@example.com" });
+        context.SaveChanges();
+        var controller = new StudentsController(context);
+
+        var result = controller.GetAll("nonexistent");
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.Empty(Assert.IsAssignableFrom<IEnumerable<Student>>(okResult.Value));
     }
 
     [Fact]
