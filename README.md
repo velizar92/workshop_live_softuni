@@ -23,6 +23,12 @@ The API exposes endpoints to:
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 
+## Architecture
+
+New to the codebase? See [`docs/architecture.md`](docs/architecture.md) for an overview
+of the main components, the request path from an API endpoint to the database, and a
+diagram of how the pieces connect.
+
 ## Solution structure
 
 ```
