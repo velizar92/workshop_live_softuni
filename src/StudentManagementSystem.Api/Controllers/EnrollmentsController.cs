@@ -30,6 +30,13 @@ public class EnrollmentsController : ControllerBase
             return Conflict($"Student {request.StudentId} is already enrolled in course {request.CourseId}.");
         }
 
+        var enrolledCount = _context.Enrollments.Count(e => e.CourseId == request.CourseId);
+
+        if (enrolledCount >= course.MaxCapacity)
+        {
+            return Conflict($"Course {request.CourseId} has reached its maximum capacity.");
+        }
+
         var enrollment = new Enrollment
         {
             StudentId = student.Id,
