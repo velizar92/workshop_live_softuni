@@ -16,6 +16,7 @@ src/
   StudentManagementSystem.Api/
     Controllers/   StudentsController, CoursesController, EnrollmentsController
     Services/      IStudentService, StudentService, ICourseService, CourseService
+    Services/      IEnrollmentService, EnrollmentService
     Models/        Student, Course, Enrollment (EF Core entities)
     Data/          AppDbContext, SeedData
     Program.cs     App startup / composition root
@@ -61,6 +62,25 @@ Three controllers, one per resource:
   registered as a scoped service in `Program.cs`. `StudentsController` and
   `CoursesController` depend only on their respective service interface, not on
   `AppDbContext`.
+  `AppDbContext` directly.
+- **`CoursesController`** (`api/courses`) — CRUD for courses. Injected with
+  `AppDbContext` directly.
+- **`EnrollmentsController`** (`api/enrollments`) — create an enrollment, list a
+  student's courses, list a course's students, remove an enrollment. Injected with
+  `IEnrollmentService` and contains no data-access code of its own; it only maps the
+  service's result to the appropriate HTTP status code and body.
+
+`StudentsController` and `CoursesController` still contain their business logic
+directly (query construction, lookups, persistence) alongside HTTP concerns — see
+"Known upcoming changes" for the planned extraction into services for those two.
+
+### Services (`Services/`)
+- **`IEnrollmentService` / `EnrollmentService`** — the first service layer introduced in
+  the solution. Owns all enrollment business rules: verifying the student and course
+  exist, rejecting duplicate enrollments, enforcing `Course.MaxCapacity`, and persisting
+  or removing `Enrollment` rows. It depends on `AppDbContext` and is registered as a
+  scoped service in `Program.cs`. `EnrollmentsController` depends only on
+  `IEnrollmentService`, not on `AppDbContext`.
 
 ### Models (`Models/`)
 Plain EF Core entity classes:
@@ -72,8 +92,8 @@ Plain EF Core entity classes:
 - **`Enrollment`** — the join entity between `Student` and `Course`, with `StudentId`,
   `CourseId`, navigation properties to each, and `EnrollmentDate`.
 
-`MaxCapacity` exists on `Course` but is not currently enforced anywhere — nothing stops
-an enrollment from being created once a course is full (see "Known upcoming changes").
+`MaxCapacity` on `Course` is enforced by `EnrollmentService`, which rejects new
+enrollments once the course is full.
 
 ### Data access (`Data/`)
 - **`AppDbContext`** — the single EF Core `DbContext`, exposing `DbSet<Student>`,
@@ -103,6 +123,7 @@ graph TD
         Enrollments["EnrollmentsController"]
         StudentSvc["IStudentService / StudentService"]
         CourseSvc["ICourseService / CourseService"]
+        EnrollmentSvc["EnrollmentService"]
         Seed["SeedData"]
         Ctx["AppDbContext"]
         Models["Models: Student, Course, Enrollment"]
@@ -117,6 +138,7 @@ graph TD
     Program -->|registers & resolves| Students
     Program -->|registers & resolves| Courses
     Program -->|registers & resolves| Enrollments
+    Program -->|registers| EnrollmentSvc
     Program -->|EnsureCreated + seed on startup| Seed
 
     Students --> StudentSvc
@@ -124,6 +146,10 @@ graph TD
     Enrollments --> Ctx
     StudentSvc --> Ctx
     CourseSvc --> Ctx
+    Students --> Ctx
+    Courses --> Ctx
+    Enrollments --> EnrollmentSvc
+    EnrollmentSvc --> Ctx
     Seed --> Ctx
 
     Ctx --> Models
@@ -138,6 +164,11 @@ HTTP response — they contain no EF Core code themselves. `EnrollmentsControlle
 talks to `AppDbContext` directly (synchronously, via LINQ-to-Entities) and translates
 the result into an HTTP response itself; "controller logic" and "business logic" remain
 the same code there (see "Known upcoming changes").
+`StudentsController` and `CoursesController` talk to `AppDbContext` directly
+(synchronously, via LINQ-to-Entities) and translate the result into an HTTP response —
+for these two, "controller logic" and "business logic" are still the same code.
+`EnrollmentsController` instead delegates all business rules and data access to
+`EnrollmentService`, and only translates the service's result into an HTTP response.
 
 Example — `POST /api/enrollments` (`EnrollmentsController.Enroll`):
 
@@ -146,21 +177,26 @@ sequenceDiagram
     participant C as Client
     participant MVC as ASP.NET Core MVC routing
     participant EC as EnrollmentsController
+    participant ES as EnrollmentService
     participant DB as AppDbContext (EF Core)
     participant SQLite as SQLite database
 
     C->>MVC: POST /api/enrollments { studentId, courseId }
     MVC->>EC: bind body to EnrollmentRequest, invoke Enroll(request)
-    EC->>DB: Students.Single(s => s.Id == request.StudentId)
+    EC->>ES: Enroll(studentId, courseId)
+    ES->>DB: Students.Find(studentId)
     DB->>SQLite: SELECT ... WHERE Id = @studentId
-    SQLite-->>DB: student row
-    EC->>DB: Courses.Single(c => c.Id == request.CourseId)
+    SQLite-->>DB: student row (or none -> StudentNotFound)
+    ES->>DB: Courses.Find(courseId)
     DB->>SQLite: SELECT ... WHERE Id = @courseId
-    SQLite-->>DB: course row
-    EC->>DB: Enrollments.Add(enrollment); SaveChanges()
+    SQLite-->>DB: course row (or none -> CourseNotFound)
+    ES->>DB: check duplicate enrollment and course capacity
+    DB-->>ES: AlreadyEnrolled / CourseAtCapacity, or none
+    ES->>DB: Enrollments.Add(enrollment); SaveChanges()
     DB->>SQLite: INSERT INTO Enrollments (...)
     SQLite-->>DB: rows affected
-    DB-->>EC: tracked Enrollment entity
+    DB-->>ES: tracked Enrollment entity
+    ES-->>EC: EnrollResult (Created + Enrollment)
     EC-->>C: 201 Created + Enrollment body
 ```
 
@@ -169,6 +205,10 @@ sequenceDiagram
 `Add`/`Remove` followed by `SaveChanges()`, and the controller maps the service's return
 value (`null`/non-null, `true`/`false`) to `Ok`, `NotFound`, `CreatedAtAction`, or
 `NoContent`.
+The `Students` and `Courses` endpoints still follow the controller → `AppDbContext` →
+SQLite pattern directly: simple lookups use `Find`/`Single`/`FirstOrDefault`, writes call
+`Add`/`Remove` followed by `SaveChanges()`, and the controller maps the outcome to `Ok`,
+`NotFound`, `CreatedAtAction`, `NoContent`, or `StatusCode(201, ...)`.
 
 Note that database calls are currently synchronous (`Find`, `ToList`, `SaveChanges`)
 rather than using the `async` EF Core APIs, for both the services and
@@ -176,27 +216,30 @@ rather than using the `async` EF Core APIs, for both the services and
 
 ## 5. Enrollment logic today
 
-Enrollment-related behavior lives entirely in `EnrollmentsController`
-(`src/StudentManagementSystem.Api/Controllers/EnrollmentsController.cs`):
+Enrollment-related business logic lives in `EnrollmentService`
+(`src/StudentManagementSystem.Api/Services/EnrollmentService.cs`); the controller only
+maps its results to HTTP responses:
 
-- **Create** (`POST /api/enrollments`) — looks up the student and course by id (throws
-  if either is missing, since `Single` has no fallback), creates an `Enrollment` row
-  with `EnrollmentDate = DateTime.UtcNow`, and saves it. It does not currently check for
-  duplicate enrollments or course capacity.
+- **Create** (`POST /api/enrollments`) — looks up the student by id (`404` if missing),
+  looks up the course by id (`404` if missing), rejects the request if the student is
+  already enrolled in the course (`409`), rejects it if the course has reached
+  `MaxCapacity` (`409`), otherwise creates an `Enrollment` row with
+  `EnrollmentDate = DateTime.UtcNow` and saves it (`201` with the created `Enrollment`).
+  A `DbUpdateException` from the unique `(StudentId, CourseId)` index on a concurrent
+  duplicate insert is caught and also reported as the duplicate-enrollment conflict.
 - **List a student's courses** (`GET /api/enrollments/students/{studentId}/courses`) —
   queries `Enrollments` filtered by `StudentId` and projects to `Course`.
 - **List a course's students** (`GET /api/enrollments/courses/{courseId}/students`) —
   queries `Enrollments` filtered by `CourseId` and projects to `Student`.
 - **Remove an enrollment**
   (`DELETE /api/enrollments/students/{studentId}/courses/{courseId}`) — looks up the
-  matching `Enrollment` row and removes it, returning `404` if none exists.
-
-This logic is intentionally simple today and is expected to change (see below).
+  matching `Enrollment` row and removes it; the controller returns `404` if none exists,
+  otherwise `204`.
 
 ## 6. Known upcoming changes (keep this document in sync)
 
-The following changes are tracked as separate issues and will affect this document when
-implemented. Update the relevant section above when any of these land:
+The following change is tracked as a separate issue and will affect this document when
+implemented. Update the relevant section above when it lands:
 
 - Preventing duplicate enrollments and enforcing `Course.MaxCapacity` when creating an
   enrollment (changes section 5's "Create" behavior).
@@ -206,6 +249,10 @@ implemented. Update the relevant section above when any of these land:
   following the pattern already established by `StudentService`/`CourseService`
   (changes sections 2, 3, and 4 — `EnrollmentsController` would stop depending on
   `AppDbContext` directly).
+- Extracting business logic out of `StudentsController` and `CoursesController` into
+  dedicated services, following the pattern already established by
+  `EnrollmentService` (changes sections 2 and 4 — those two controllers would stop
+  depending on `AppDbContext` directly).
 
 ## 7. Important files
 
@@ -215,6 +262,8 @@ implemented. Update the relevant section above when any of these land:
 | `src/StudentManagementSystem.Api/Program.cs` | App startup, DI registration, HTTP pipeline. |
 | `src/StudentManagementSystem.Api/Controllers/*.cs` | HTTP endpoints; business logic for `Enrollments`, HTTP mapping only for `Students`/`Courses`. |
 | `src/StudentManagementSystem.Api/Services/*.cs` | Student and course business logic. |
+| `src/StudentManagementSystem.Api/Controllers/*.cs` | HTTP endpoints; business logic for `Students`/`Courses`, HTTP mapping only for `Enrollments`. |
+| `src/StudentManagementSystem.Api/Services/*.cs` | Enrollment business logic (first service layer in the solution). |
 | `src/StudentManagementSystem.Api/Models/*.cs` | EF Core entities. |
 | `src/StudentManagementSystem.Api/Data/AppDbContext.cs` | `DbContext` and entity relationship configuration. |
 | `src/StudentManagementSystem.Api/Data/SeedData.cs` | Deterministic sample data inserted on first run. |

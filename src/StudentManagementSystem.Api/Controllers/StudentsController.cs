@@ -16,9 +16,21 @@ public class StudentsController : ControllerBase
     }
 
     [HttpGet]
-    public ActionResult<IEnumerable<Student>> GetAll()
+    public ActionResult<IEnumerable<Student>> GetAll([FromQuery] string? search = null)
     {
-        return Ok(_studentService.GetAll());
+        var query = _context.Students.AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var normalizedSearch = search.ToLower();
+            query = query.Where(s =>
+                s.FirstName.ToLower().Contains(normalizedSearch) ||
+                s.LastName.ToLower().Contains(normalizedSearch) ||
+                s.Email.ToLower().Contains(normalizedSearch));
+        }
+
+        var students = query.ToList();
+        return Ok(students);
     }
 
     [HttpGet("{id}")]
