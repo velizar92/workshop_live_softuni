@@ -64,7 +64,11 @@ public class CoursesController : ControllerBase
     [HttpDelete("{id}")]
     public IActionResult Delete(int id)
     {
-        var course = _context.Courses.Single(c => c.Id == id);
+        var course = _context.Courses.Find(id);
+        if (course == null)
+        {
+            return NotFound();
+        }
 
         _context.Courses.Remove(course);
         _context.SaveChanges();
