@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using StudentManagementSystem.Api.Data;
 using StudentManagementSystem.Api.Models;
+using StudentManagementSystem.Api.Services;
 
 namespace StudentManagementSystem.Api.Controllers;
 
@@ -9,24 +8,23 @@ namespace StudentManagementSystem.Api.Controllers;
 [Route("api/students")]
 public class StudentsController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly IStudentService _studentService;
 
-    public StudentsController(AppDbContext context)
+    public StudentsController(IStudentService studentService)
     {
-        _context = context;
+        _studentService = studentService;
     }
 
     [HttpGet]
     public ActionResult<IEnumerable<Student>> GetAll()
     {
-        var students = _context.Students.ToList();
-        return Ok(students);
+        return Ok(_studentService.GetAll());
     }
 
     [HttpGet("{id}")]
     public ActionResult<Student> GetById(int id)
     {
-        var student = _context.Students.Find(id);
+        var student = _studentService.GetById(id);
         if (student == null)
         {
             return NotFound();
@@ -38,42 +36,20 @@ public class StudentsController : ControllerBase
     [HttpPost]
     public ActionResult<Student> Create(Student student)
     {
-        _context.Students.Add(student);
-        _context.SaveChanges();
+        var created = _studentService.Create(student);
 
-        return CreatedAtAction(nameof(GetById), new { id = student.Id }, student);
+        return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
     [HttpPut("{id}")]
     public IActionResult Update(int id, Student updatedStudent)
     {
-        var student = _context.Students.Find(id);
-        if (student == null)
-        {
-            return NotFound();
-        }
-
-        student.FirstName = updatedStudent.FirstName;
-        student.LastName = updatedStudent.LastName;
-        student.Email = updatedStudent.Email;
-
-        _context.SaveChanges();
-
-        return NoContent();
+        return _studentService.Update(id, updatedStudent) ? NoContent() : NotFound();
     }
 
     [HttpDelete("{id}")]
     public IActionResult Delete(int id)
     {
-        var student = _context.Students.Find(id);
-        if (student == null)
-        {
-            return NotFound();
-        }
-
-        _context.Students.Remove(student);
-        _context.SaveChanges();
-
-        return NoContent();
+        return _studentService.Delete(id) ? NoContent() : NotFound();
     }
 }
